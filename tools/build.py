@@ -31,8 +31,12 @@ def sources():
     return [R/n for n in names]
 def main():
     a=argparse.ArgumentParser();a.add_argument('--out',type=Path,default=R/'build');a.add_argument('-j',type=int,default=8)
-    a.add_argument('--target',choices=sorted(TARGETS),default='tahoe');a=a.parse_args();T=TARGETS[a.target]
-    out=a.out;obj=out/'obj';obj.mkdir(parents=True,exist_ok=True)
+    a.add_argument('--target',choices=sorted(TARGETS),default='tahoe')
+    a.add_argument('--probe',action='store_true',help='test build: enable the Auto Unlock ranging probe in the IOKit personality')
+    a=a.parse_args();T=TARGETS[a.target]
+    marker=T['marker']+'-probe' if a.probe else T['marker']
+    out=(a.out/'probe') if (a.probe and a.out==R/'build') else a.out
+    obj=out/'obj';obj.mkdir(parents=True,exist_ok=True)
     fw=R/'include/FwBinary.cpp'
     if not fw.exists():subprocess.run([sys.executable,R/'scripts/zlib_compress_fw.py',fw,str(R/'itlwm/firmware')+'/'],check=True)
     sdk=R/'MacKernelSDK'
@@ -51,7 +55,7 @@ __attribute__((visibility("hidden"))) int _kext_apple_cc=__APPLE_CC__;
 ''')
     base=['xcrun','clang','-arch','x86_64','-O1','-g0','-mmacosx-version-min=10.15','-mkernel','-nostdinc','-fno-builtin','-fno-common','-DKERNEL','-DKERNEL_PRIVATE','-DDRIVER_PRIVATE','-DAPPLE','-DNeXT',
       '-D__IO80211_TARGET='+T['io80211'],*(['-DAIRPORT_WCL','-DAIRPORT_VTD'] if T.get('wcl',True) else []),'-DAIRPORT','-D__PRIVATE_SPI__','-DIO80211FAMILY_V2','-DIEEE80211_STA_ONLY','-DITLWM_VERSION="2.4.1"','-DGIT_COMMIT="_forbidden"',
-      '-DITL_FORBIDDEN_BUILD="'+T['marker']+'"','-ftrivial-auto-var-init=zero','-fstack-protector-strong','-w','-include',str(R/'itlwm/PrivateSPI.pch'),'-I'+str(sdk/'Headers')]
+      '-DITL_FORBIDDEN_BUILD="'+marker+'"','-ftrivial-auto-var-init=zero','-fstack-protector-strong','-w','-include',str(R/'itlwm/PrivateSPI.pch'),'-I'+str(sdk/'Headers')]
     for d in ('itl80211/openbsd','itl80211','include'):base+=['-isystem',str(R/d)]
     for d in dirs:base+=['-iquote',str(d)]
     def compile(src):
@@ -74,6 +78,12 @@ __attribute__((visibility("hidden"))) int _kext_apple_cc=__APPLE_CC__;
     exe=kext/'MacOS'/NAME
     subprocess.run(['xcrun','clang++','-arch','x86_64','-mmacosx-version-min=10.15','-nostdlib','-Xlinker','-kext','-Xlinker','-no_fixup_chains','-lkmodc++','-lkmod','-lcc_kext','-L'+str(sdk/'Library/x86_64'),'-o',exe,*objs],check=True)
     p=plistlib.loads((R/'ForbiddenItlwm/WCL/Info.plist').read_bytes())
+    if a.probe:
+        # The driver reads these from its IOKit personality in init(), so a
+        # tester can run the probe without changing boot-args and rebooting.
+        personality=p['IOKitPersonalities']['NetworkController']
+        personality['ITLRangingProbeEnabled']=1
+        personality['ITLRangingCapsMask']=132   # 0x84, same as the non-WCL path
     def sub(v):
         if isinstance(v,dict):return {k:sub(x) for k,x in v.items()}
         if isinstance(v,str):

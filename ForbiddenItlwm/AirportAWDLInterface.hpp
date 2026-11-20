@@ -141,6 +141,7 @@ private:
     }
     ItlAWDLFrameTemplate frameTemplate;
     uint8_t localFrameAddress[6] = {};
+    uint32_t addressSetCalls = 0;
     bool dataCopyProbeEnabled = false;
     unsigned dataCopyAttempts = 0, dataCopySuccess = 0;
     bool dataDeliverEnabled = false;
