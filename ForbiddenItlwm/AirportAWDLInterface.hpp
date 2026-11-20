@@ -45,7 +45,7 @@ public:
 #endif
     // Pure in IO80211VirtualInterface on Tahoe, and in IO80211SkywalkInterface on Sequoia.
 #if __IO80211_TARGET != __MAC_14_4   // not a virtual on Sonoma
-    IOReturn setMacAddress(ether_addr&) override { return unsupported("setMacAddress"); }
+    IOReturn setMacAddress(ether_addr&) override;
 #endif
     IOReturn getSSID(apple80211_ssid_data*) override { return unsupported("getSSID"); }
     IOReturn getCHANNEL(apple80211_channel_data*) override { return unsupported("getCHANNEL"); }
@@ -132,6 +132,7 @@ private:
     }
     ItlAWDLFrameTemplate frameTemplate;
     uint8_t localFrameAddress[6] = {};
+    uint32_t addressSetCalls = 0;
     bool dataCopyProbeEnabled = false;
     unsigned dataCopyAttempts = 0, dataCopySuccess = 0;
     bool dataDeliverEnabled = false;

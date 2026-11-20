@@ -8,6 +8,9 @@
 
 #include "ItlCountedCopy.hpp"
 #include "AirportItlwmV2.hpp"
+#include "RangingProbe.hpp"
+#include <libkern/c++/OSNumber.h>
+#include <libkern/OSAtomic.h>
 
 // Build marker shown as ItlwmAWDLInterfaceBuild; tools/build.py sets it per macOS target.
 #ifndef ITL_FORBIDDEN_BUILD
@@ -49,6 +52,93 @@ OSDefineMetaClassAndStructors(ItlAWDLInterface, IO80211AWDLProtocol)
 
 IO80211WorkQueue *_fWorkloop;
 IOCommandGate *_fCommandGate;
+
+// Ranging probe (issue #85). Both the six RANGING virtuals and the raw ioctl
+// dispatch are counted because we don't yet know which one macOS uses. Nothing
+// here reads a request payload: only selector integers are kept. All the state
+// lives in this file so the stubbed virtuals in other translation units share
+// the same counters.
+namespace RangingProbe {
+static IOService *sOwner = nullptr;
+static bool sEnabled = false;
+static uint32_t sCapsMask = 0x84;
+static volatile SInt32 sCounts[kSiteCount] = {};
+static char sLast[128] = "none";
+
+static void publish()
+{
+    if (!sEnabled || !sOwner || ml_at_interrupt_context())
+        return;
+    char snapshot[320];
+    snprintf(snapshot, sizeof(snapshot),
+             "enable=%d start=%d auth=%d caps=%d getEnable=%d getStart=%d getCaps=%d "
+             "setEnable=%d setStart=%d setAuth=%d ioctl=%d sky1=%d sky2=%d",
+             int(sCounts[kCmdEnable]), int(sCounts[kCmdStart]),
+             int(sCounts[kCmdAuthenticate]), int(sCounts[kCmdCaps]),
+             int(sCounts[kGetEnable]), int(sCounts[kGetStart]), int(sCounts[kGetCaps]),
+             int(sCounts[kSetEnable]), int(sCounts[kSetStart]), int(sCounts[kSetAuthenticate]),
+             int(sCounts[kDispatchIoctl]), int(sCounts[kDispatchSkywalk1]),
+             int(sCounts[kDispatchSkywalk2]));
+    sOwner->setProperty("ItlwmRangingProbe", snapshot);
+    sOwner->setProperty("ItlwmRangingProbeLast", sLast);
+}
+
+void init(IOService *owner)
+{
+    if (sOwner || !owner)
+        return;
+    int value = 0;
+    bool wanted = PE_parse_boot_argn("-itlawdlrangingprobe", &value, sizeof(value));
+    if (PE_parse_boot_argn("itlawdlrangingcaps", &value, sizeof(value)) &&
+        value >= 0 && value <= 255)
+        sCapsMask = static_cast<uint32_t>(value);
+    // A test build can enable the probe in its IOKit personality instead of
+    // asking the tester to change boot-args and reboot.
+    OSNumber *enabledNumber = OSDynamicCast(OSNumber, owner->getProperty("ITLRangingProbeEnabled"));
+    if (enabledNumber && enabledNumber->unsigned64BitValue() != 0)
+        wanted = true;
+    OSNumber *maskNumber = OSDynamicCast(OSNumber, owner->getProperty("ITLRangingCapsMask"));
+    if (maskNumber && maskNumber->unsigned64BitValue() <= 255)
+        sCapsMask = static_cast<uint32_t>(maskNumber->unsigned64BitValue());
+    if (!wanted)
+        return;
+    sOwner = owner;
+    sEnabled = true;
+    publish();
+}
+
+bool enabled() { return sEnabled; }
+uint32_t capsMask() { return sCapsMask; }
+
+void note(Site site)
+{
+    if (!sEnabled || site >= kSiteCount)
+        return;
+    OSIncrementAtomic(&sCounts[site]);
+    publish();
+}
+
+void noteRequest(Site site, unsigned cmd, unsigned request)
+{
+    if (!sEnabled || site >= kSiteCount)
+        return;
+    OSIncrementAtomic(&sCounts[site]);
+    Site commandSite = kSiteCount;
+    const char *name = "other";
+    switch (cmd) {
+        case 241: commandSite = kCmdEnable;       name = "RANGING_ENABLE";       break;
+        case 242: commandSite = kCmdStart;        name = "RANGING_START";        break;
+        case 243: commandSite = kCmdAuthenticate; name = "RANGING_AUTHENTICATE"; break;
+        case 266: commandSite = kCmdCaps;         name = "RANGING_CAPS";         break;
+        default: break;
+    }
+    if (commandSite != kSiteCount)
+        OSIncrementAtomic(&sCounts[commandSite]);
+    if (!ml_at_interrupt_context())
+        snprintf(sLast, sizeof(sLast), "%s cmd %u request %u", name, cmd, request);
+    publish();
+}
+} // namespace RangingProbe
 
 #if defined(ITL_AWDL_NATIVE)
 IOReturn ItlAWDLInterface::getAWDL_SYNC_ENABLED(apple80211_awdl_sync_enabled *data)
@@ -103,6 +193,24 @@ void ItlAWDLInterface::acceptNativeRequests()
     masterIndicationEnabled = wanted && (verified || forced);
     setProperty("ItlwmAWDLMiState", !wanted ? "off" : !masterIndicationEnabled ? "blocked: build not verified" :
                 forced ? "on (unverified build, -itlawdlanybuild)" : "on");
+}
+
+// wifip2pd sets a fresh, randomised address on awdl0 before handing the AWDL
+// info to sharingd. The address is ours: frame templates, the master indication
+// and receive filtering all use localFrameAddress, so installing it there is
+// enough. No address is published in the registry.
+IOReturn ItlAWDLInterface::setMacAddress(ether_addr &address)
+{
+    IOLock *lock = ensureConfigurationLock();
+    if (!lock)
+        return kIOReturnNoMemory;
+    IOLockLock(lock);
+    memcpy(localFrameAddress, &address, sizeof(localFrameAddress));
+    ++addressSetCalls;
+    const uint32_t calls = addressSetCalls;
+    IOLockUnlock(lock);
+    setProperty("ItlwmAWDLAddressSetCalls", uint64_t(calls), 32);
+    return kIOReturnSuccess;
 }
 
 IOReturn ItlAWDLInterface::getAWDL_AF_TX_MODE(apple80211_awdl_af_tx_mode *data)
@@ -1519,6 +1627,7 @@ bool AirportItlwm::init(OSDictionary *properties)
     awdlManagementInputEnabled = false;
     awdlManagementActive = 0;
     setProperty("ItlwmAWDLInterfaceBuild", ITL_FORBIDDEN_BUILD);
+    RangingProbe::init(this);
     setProperty("ItlwmAWDLInterfaceTestEnabled", awdlInterfaceTest ? kOSBooleanTrue : kOSBooleanFalse);
     OSNumber *requests = OSNumber::withNumber(static_cast<UInt64>(0), 64);
     if (requests) {
@@ -2512,6 +2621,13 @@ getCARD_CAPABILITIES(OSObject *object,
         if (band2 && band5)
             cd->capabilities[3] |= 0x20;
     }
+    // Optional Apple Watch Auto Unlock probe (#85). The non-WCL path reports
+    // byte 7 = 0x84; the WCL path never did. Off by default: advertising this
+    // byte can make macOS enable other Continuity paths we haven't tested.
+    if (RangingProbe::enabled()) {
+        cd->capabilities[7] |= static_cast<uint8_t>(RangingProbe::capsMask());
+        cd->capabilities[4] |= 0x01;  // ranging needs the AWDL peer interface
+    }
     cd->capabilities[2] = (1 << (APPLE80211_CAP_WME - 16)) |
         (1 << (APPLE80211_CAP_SHORT_GI_40MHZ - 16)) |
         (1 << (APPLE80211_CAP_SHORT_GI_20MHZ - 16));
@@ -2719,6 +2835,11 @@ SInt32 AirportItlwm::apple80211_ioctl(IO80211SkywalkInterface *interface,unsigne
     if (!ml_at_interrupt_context())
         XYLog("%s cmd: %s b1: %d b2: %d\n", __FUNCTION__, convertApple80211IOCTLToString((unsigned int)cmd), b1, b2);
 #ifdef AIRPORT_WCL
+    // 575 = APPLE80211_IOC_OS_ELIGIBILITY. Acknowledged without reading the
+    // opaque payload; wifip2pd won't proceed with AWDL eligibility otherwise.
+    if (cmd == 575)
+        return kIOReturnSuccess;
+    RangingProbe::noteRequest(RangingProbe::kDispatchIoctl, unsigned(cmd), 0);
     noteUnhandledRequest(this, "ioctl", unsigned(cmd), 0);
     return kIOReturnUnsupported;
 #else
@@ -2730,6 +2851,7 @@ SInt32 AirportItlwm::apple80211SkywalkRequest(UInt request,int cmd,IO80211Skywal
 {
     if (!ml_at_interrupt_context())
         XYLog("%s 1 cmd: %s request: %d\n", __FUNCTION__, convertApple80211IOCTLToString(cmd), request);
+    RangingProbe::noteRequest(RangingProbe::kDispatchSkywalk1, unsigned(cmd), request);
     noteUnhandledRequest(this, "skywalk1", unsigned(cmd), request);
     return kIOReturnUnsupported;
 }
@@ -2738,6 +2860,7 @@ SInt32 AirportItlwm::apple80211SkywalkRequest(UInt request,int cmd,IO80211Skywal
 {
     if (!ml_at_interrupt_context())
         XYLog("%s 2 cmd: %s request: %d\n", __FUNCTION__, convertApple80211IOCTLToString(cmd), request);
+    RangingProbe::noteRequest(RangingProbe::kDispatchSkywalk2, unsigned(cmd), request);
     noteUnhandledRequest(this, "skywalk2", unsigned(cmd), request);
     return kIOReturnUnsupported;
 }
