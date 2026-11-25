@@ -123,9 +123,9 @@ The driver keeps block ack with one Apple device at a time, and keeps it for as 
 ```
 ioreg -l -w0 | grep -E '"ITLAWDLCoex(BaPeerAdded|BaOtherPeer|BaRequests)"'
 ```
-A high `ITLAWDLCoexBaOtherPeer` means another device holds it. Put that device to sleep, or turn its Wi-Fi off, for about ten minutes, then try the iPhone again. From 0.7.0-alpha.2 you can instead try `-itlawdlpeerhandoff` ([PR #50](https://github.com/retropineaple/ForbiddenItlwm/pull/50), opt-in): it hands the session to the iPhone once the other device is idle. `ITLAWDLCoexPeerHandoffRetired` counts the handovers; please report whether it helped. Or try the experimental `-itlawdlmultipeer` (from 0.7.0-alpha.2): each device gets its own block ack, so neither waits for the other. `ioreg -l -w0 | grep '"ITLAWDLCoexPeers"'` shows one entry per device; please report it with how the transfers went.
+A high `ITLAWDLCoexBaOtherPeer` means another device holds it. Put that device to sleep, or turn its Wi-Fi off, for about ten minutes, then try the iPhone again. From 0.7.0-alpha.2 you can instead try `-itlawdlpeerhandoff` ([PR #50](https://github.com/retropineaple/ForbiddenItlwm/pull/50), opt-in): it hands the session to the iPhone once the other device is idle. `ITLAWDLCoexPeerHandoffRetired` counts the handovers; please report whether it helped. Or try the experimental `-itlawdlmultipeer` (from 0.7.0-alpha.2): each device gets its own block ack, so neither waits for the other. `ioreg -l -w0 | grep '"ITLAWDLCoexPeers"'` shows one entry per device; please report it with how the transfers went. Known issue: with `-itlawdlmultipeer`, Block Ack to a second device sometimes never starts, so the Mac sends to it frame by frame ([#103](https://github.com/retropineaple/ForbiddenItlwm/issues/103)).
 
-The two devices can also use different AirDrop channels, for example the iPhone 44 and an iPad 149 (`ITLAWDLCoexPeer5GHz` shows the last device heard). The listener is on one 5 GHz channel at a time, so the device on the other channel reaches the Mac only in its few slots there ([#45](https://github.com/retropineaple/ForbiddenItlwm/issues/45)). Following both is on the [roadmap](ROADMAP.md).
+The two devices can also use different AirDrop channels, for example the iPhone 44 and an iPad 149 (`ITLAWDLCoexPeer5GHz` shows the last device heard). The listener is on one 5 GHz channel at a time, so the device on the other channel reaches the Mac only in its few slots there ([#45](https://github.com/retropineaple/ForbiddenItlwm/issues/45)). From 0.7.0-alpha.4, `itlawdlsched=1` follows both: when macOS's plan names a second channel, the listener visits it in those slots, and `ITLAWDLSchedSecond` shows the visits. This is experimental and was tested here only with a simulated second channel. It can only use a channel the card's firmware lets the Mac send on.
 
 ## Universal Clipboard or Handoff from the Mac stops working
 
@@ -141,7 +141,7 @@ Seen on Tahoe 26.7.1 and 26.7.3 ([#62](https://github.com/retropineaple/Forbidde
 
 BlueToolFixup and BTLEAdvFixup both patch `bluetoothd`'s code in memory, in the copy macOS shares between processes. When memory runs low, macOS drops part of a block of that code and reads it again later, and its integrity check then also covers the page that is still patched, which fails. It follows memory pressure, so it shows up after hours, not at boot.
 
-Fixed in 0.6.0-beta.4 (BTLEAdvFixup 0.9.4), with `-btleadv` and `BTLEAdvFixup.kext` after `BlueToolFixup.kext` in `Kernel` → `Add` (the order in [INSTALL.md](INSTALL.md)). BTLEAdvFixup then gives APFS's check the original bytes of the patched pages, BlueToolFixup's too. Check:
+This crash is fixed in 0.6.0-beta.4 (BTLEAdvFixup 0.9.4), with `-btleadv` and `BTLEAdvFixup.kext` after `BlueToolFixup.kext` in `Kernel` → `Add` (the order in [INSTALL.md](INSTALL.md)). BTLEAdvFixup then gives APFS's check the original bytes of the patched pages, BlueToolFixup's too. Check:
 
 ```bash
 ioreg -l -w0 | grep -E '"BTLEAdv(VerifyHook|PatchedPages|VerifyRescues|VerifyRescueFailures)"'
@@ -150,6 +150,8 @@ ioreg -l -w0 | grep -E '"BTLEAdv(VerifyHook|PatchedPages|VerifyRescues|VerifyRes
 `BTLEAdvVerifyHook` should be 1. `BTLEAdvPatchedPages` counts the patched pages it knows: on 26.7.1 it's 6 once Bluetooth has been used, four from BlueToolFixup and two from BTLEAdvFixup. If it stays at 2 or less, BTLEAdvFixup loads before BlueToolFixup and can't see BlueToolFixup's patches: move it after. `BTLEAdvVerifyRescues` counts reloads that would have crashed `bluetoothd`.
 
 Without BTLEAdvFixup (BlueToolFixup alone, with any Bluetooth card), a restart brings Bluetooth back until it happens again. More memory makes it rarer.
+
+**A second, different crash: "Code Signature Invalid"** ([#62](https://github.com/retropineaple/ForbiddenItlwm/issues/62)). Here `bluetoothd` is killed (SIGKILL, not SIGBUS) with "Code Signature Invalid", again and again, also after long uptimes. macOS checks a page's code signature again while the page still holds the patches, so its bytes don't match. BTLEAdvFixup 0.9.4 doesn't cover this. From BTLEAdvFixup 0.9.8 (0.7.0-alpha.4) such a page gets its original bytes for the check and its patches back afterwards. `ioreg -l -w0 | grep BTLEAdvVerifyRevalidations` counts these. It hasn't been reproduced on the project's hackintosh, so please report the counter after a few days of uptime.
 
 ## Wi-Fi is off or greyed out, and there's no `en0`
 

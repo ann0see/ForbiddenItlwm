@@ -41,11 +41,11 @@ bluetoothd. It doesn't contain your user name, Mac name, serial number, network 
 - **The Apple signature of bluetoothd.** While BTLEAdvFixup is loaded it patches bluetoothd in memory, so the signature
   then reads as invalid. That's expected, and the report says so. BlueToolFixup patches bluetoothd in memory the
   same way, so it reads as invalid with BlueToolFixup alone too. With neither loaded, a broken signature means the
-  system files were modified, for example by OpenCore Legacy Patcher, so tell us if you use it.
+  system files were modified, for example by OpenCore Legacy Patcher, so please mention it if you use it.
 
 `RESULT: everything ... matches this build` means every check the script makes passed. That's good evidence, so
 support can usually be added quickly, but it doesn't prove the build behaves the same: the script doesn't check
-everything, for example not BTLEAdvFixup's APFS and USB hooks. Anything else lists what differs, which is what we need to add it. Until a release
+everything, for example not BTLEAdvFixup's APFS and USB hooks. Anything else lists what differs, which is what's needed to add it. Until a release
 adds your build, the driver keeps AirDrop off on it (unless it runs an "expected" Sequoia 15.8.x kernel, or you use
 `-itlawdlanybuild`).
 

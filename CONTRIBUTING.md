@@ -1,6 +1,6 @@
 # Contributing
 
-Pull requests are welcome. This page explains how to make one that can be reviewed and merged quickly. ForbiddenItlwm runs in the macOS kernel and talks to Wi-Fi firmware, so every change is read line by line and tested on real hardware before it ships. Small, focused pull requests get through that much faster than big ones.
+Pull requests are welcome. This page explains how to make one that can be reviewed and merged quickly. ForbiddenItlwm runs in the macOS kernel and talks to Wi-Fi firmware, so every change is read line by line and checked with the host tests and builds, and tested on the project's hackintosh where that's possible. What couldn't be tested (other cards, Sequoia and Sonoma on hardware, several Apple devices at once) is said in the release notes. Small, focused pull requests get through that much faster than big ones.
 
 ## Before you start
 

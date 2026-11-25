@@ -9,7 +9,7 @@ A Lilu plugin that lets macOS start Bluetooth LE advertising, which AirDrop need
 - **Duplicate filter (experimental):** with `-btleadvnodupfilter` it also turns off `bluetoothd`'s scan duplicate filter, so the Mac sees an iPhone's changed advertising at once instead of at the next scan restart.
 - **Advertising addresses (#102, from 0.9.7):** an advertising set never gets another set's address, and a set whose address only this kext sent gets it once more just before it's first switched on, since the kext can't see whether the controller accepted it. `BTLEAdvSetAddresses` and `BTLEAdvEnableAddresses` count them.
 - **Before a macOS update, boot without `-btleadv` and `-btleadvnodupfilter`.** The second is new in 0.9.5 and hasn't been tried with an update yet. While the kext is active, reading `bluetoothd` returns the patched pages, and an incremental update that checks the file can fail.
-- **Disable IntelBTPatcher.** Both hook the same function, and Lilu panics if two plugins do. BTLEAdvFixup takes over IntelBTPatcher's jobs: the fix-up before the first scan, and, from 0.9.1, the fix that lets new LE mice and keyboards finish pairing.
+- **Disable IntelBTPatcher when you use BTLEAdvFixup.** Both hook the same function, and Lilu panics if two plugins do. BTLEAdvFixup takes over IntelBTPatcher's jobs: the fix-up before the first scan, and, from 0.9.1, the fix that lets new LE mice and keyboards finish pairing. If you don't use `-btleadv`, leave BTLEAdvFixup out and keep IntelBTPatcher (or IntelBTUnified) instead, as [docs/INSTALL.md](../docs/INSTALL.md) describes.
 
 Build it with `tools/build_btleadv.py`, as described in [docs/INSTALL.md](../docs/INSTALL.md).
 
